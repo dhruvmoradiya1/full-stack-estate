@@ -1,6 +1,6 @@
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
-import prisma from "../lib/prisma.js";
+import User from "../models/User.js";
 
 export const register = async (req, res) => {
   const { username, email, password } = req.body;
@@ -13,13 +13,13 @@ export const register = async (req, res) => {
     console.log(hashedPassword);
 
     // CREATE A NEW USER AND SAVE TO DB
-    const newUser = await prisma.user.create({
-      data: {
-        username,
-        email,
-        password: hashedPassword,
-      },
+    const newUser = new User({
+      username,
+      email,
+      password: hashedPassword,
     });
+
+    await newUser.save();
 
     console.log(newUser);
 
@@ -36,9 +36,7 @@ export const login = async (req, res) => {
   try {
     // CHECK IF THE USER EXISTS
 
-    const user = await prisma.user.findUnique({
-      where: { username },
-    });
+    const user = await User.findOne({ username });
 
     if (!user) return res.status(400).json({ message: "Invalid Credentials!" });
 
@@ -56,14 +54,14 @@ export const login = async (req, res) => {
 
     const token = jwt.sign(
       {
-        id: user.id,
+        id: user._id,
         isAdmin: false,
       },
       process.env.JWT_SECRET_KEY,
       { expiresIn: age }
     );
 
-    const { password: userPassword, ...userInfo } = user;
+    const { password: userPassword, ...userInfo } = user._doc;
 
     res
       .cookie("token", token, {

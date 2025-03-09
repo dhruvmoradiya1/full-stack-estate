@@ -1,26 +1,25 @@
-import prisma from "../lib/prisma.js";
+import Post from "../models/Post.js";
+import PostDetail from "../models/PostDetail.js";
+import User from "../models/User.js";
+import SavedPost from "../models/SavedPost.js";
 import jwt from "jsonwebtoken";
 
 export const getPosts = async (req, res) => {
   const query = req.query;
 
   try {
-    const posts = await prisma.post.findMany({
-      where: {
-        city: query.city || undefined,
-        type: query.type || undefined,
-        property: query.property || undefined,
-        bedroom: parseInt(query.bedroom) || undefined,
-        price: {
-          gte: parseInt(query.minPrice) || undefined,
-          lte: parseInt(query.maxPrice) || undefined,
-        },
+    const posts = await Post.find({
+      city: query.city || undefined,
+      type: query.type || undefined,
+      property: query.property || undefined,
+      bedroom: parseInt(query.bedroom) || undefined,
+      price: {
+        $gte: parseInt(query.minPrice) || undefined,
+        $lte: parseInt(query.maxPrice) || undefined,
       },
     });
 
-    // setTimeout(() => {
     res.status(200).json(posts);
-    // }, 3000);
   } catch (err) {
     console.log(err);
     res.status(500).json({ message: "Failed to get posts" });
@@ -30,16 +29,11 @@ export const getPosts = async (req, res) => {
 export const getPost = async (req, res) => {
   const id = req.params.id;
   try {
-    const post = await prisma.post.findUnique({
-      where: { id },
-      include: {
-        postDetail: true,
-        user: {
-          select: {
-            username: true,
-            avatar: true,
-          },
-        },
+    const post = await Post.findById(id).populate({
+      path: "postDetail",
+      populate: {
+        path: "user",
+        select: "username avatar",
       },
     });
 
@@ -48,19 +42,16 @@ export const getPost = async (req, res) => {
     if (token) {
       jwt.verify(token, process.env.JWT_SECRET_KEY, async (err, payload) => {
         if (!err) {
-          const saved = await prisma.savedPost.findUnique({
-            where: {
-              userId_postId: {
-                postId: id,
-                userId: payload.id,
-              },
-            },
+          const saved = await SavedPost.findOne({
+            postId: id,
+            userId: payload.id,
           });
-          res.status(200).json({ ...post, isSaved: saved ? true : false });
+          res.status(200).json({ ...post.toObject(), isSaved: saved ? true : false });
         }
       });
+    } else {
+      res.status(200).json({ ...post.toObject(), isSaved: false });
     }
-    res.status(200).json({ ...post, isSaved: false });
   } catch (err) {
     console.log(err);
     res.status(500).json({ message: "Failed to get post" });
@@ -72,15 +63,21 @@ export const addPost = async (req, res) => {
   const tokenUserId = req.userId;
 
   try {
-    const newPost = await prisma.post.create({
-      data: {
-        ...body.postData,
-        userId: tokenUserId,
-        postDetail: {
-          create: body.postDetail,
-        },
-      },
+    const newPost = new Post({
+      ...body.postData,
+      userId: tokenUserId,
     });
+
+    const postDetail = new PostDetail({
+      ...body.postDetail,
+      postId: newPost._id,
+    });
+
+    newPost.postDetail = postDetail._id;
+
+    await newPost.save();
+    await postDetail.save();
+
     res.status(200).json(newPost);
   } catch (err) {
     console.log(err);
@@ -102,17 +99,13 @@ export const deletePost = async (req, res) => {
   const tokenUserId = req.userId;
 
   try {
-    const post = await prisma.post.findUnique({
-      where: { id },
-    });
+    const post = await Post.findById(id);
 
-    if (post.userId !== tokenUserId) {
+    if (post.userId.toString() !== tokenUserId) {
       return res.status(403).json({ message: "Not Authorized!" });
     }
 
-    await prisma.post.delete({
-      where: { id },
-    });
+    await Post.findByIdAndDelete(id);
 
     res.status(200).json({ message: "Post deleted" });
   } catch (err) {
