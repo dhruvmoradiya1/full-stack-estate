@@ -1,9 +1,12 @@
-import prisma from "../lib/prisma.js";
+import User from "../models/User.js";
+import Post from "../models/Post.js";
+import SavedPost from "../models/SavedPost.js";
+import Chat from "../models/Chat.js";
 import bcrypt from "bcrypt";
 
 export const getUsers = async (req, res) => {
   try {
-    const users = await prisma.user.findMany();
+    const users = await User.find();
     res.status(200).json(users);
   } catch (err) {
     console.log(err);
@@ -14,9 +17,7 @@ export const getUsers = async (req, res) => {
 export const getUser = async (req, res) => {
   const id = req.params.id;
   try {
-    const user = await prisma.user.findUnique({
-      where: { id },
-    });
+    const user = await User.findById(id);
     res.status(200).json(user);
   } catch (err) {
     console.log(err);
@@ -39,16 +40,17 @@ export const updateUser = async (req, res) => {
       updatedPassword = await bcrypt.hash(password, 10);
     }
 
-    const updatedUser = await prisma.user.update({
-      where: { id },
-      data: {
+    const updatedUser = await User.findByIdAndUpdate(
+      id,
+      {
         ...inputs,
         ...(updatedPassword && { password: updatedPassword }),
         ...(avatar && { avatar }),
       },
-    });
+      { new: true }
+    );
 
-    const { password: userPassword, ...rest } = updatedUser;
+    const { password: userPassword, ...rest } = updatedUser._doc;
 
     res.status(200).json(rest);
   } catch (err) {
@@ -66,9 +68,7 @@ export const deleteUser = async (req, res) => {
   }
 
   try {
-    await prisma.user.delete({
-      where: { id },
-    });
+    await User.findByIdAndDelete(id);
     res.status(200).json({ message: "User deleted" });
   } catch (err) {
     console.log(err);
@@ -81,49 +81,33 @@ export const savePost = async (req, res) => {
   const tokenUserId = req.userId;
 
   try {
-    const savedPost = await prisma.savedPost.findUnique({
-      where: {
-        userId_postId: {
-          userId: tokenUserId,
-          postId,
-        },
-      },
+    const savedPost = await SavedPost.findOne({
+      userId: tokenUserId,
+      postId,
     });
 
     if (savedPost) {
-      await prisma.savedPost.delete({
-        where: {
-          id: savedPost.id,
-        },
-      });
+      await SavedPost.findByIdAndDelete(savedPost._id);
       res.status(200).json({ message: "Post removed from saved list" });
     } else {
-      await prisma.savedPost.create({
-        data: {
-          userId: tokenUserId,
-          postId,
-        },
+      const newSavedPost = new SavedPost({
+        userId: tokenUserId,
+        postId,
       });
+      await newSavedPost.save();
       res.status(200).json({ message: "Post saved" });
     }
   } catch (err) {
     console.log(err);
-    res.status(500).json({ message: "Failed to delete users!" });
+    res.status(500).json({ message: "Failed to save post!" });
   }
 };
 
 export const profilePosts = async (req, res) => {
   const tokenUserId = req.userId;
   try {
-    const userPosts = await prisma.post.findMany({
-      where: { userId: tokenUserId },
-    });
-    const saved = await prisma.savedPost.findMany({
-      where: { userId: tokenUserId },
-      include: {
-        post: true,
-      },
-    });
+    const userPosts = await Post.find({ userId: tokenUserId });
+    const saved = await SavedPost.find({ userId: tokenUserId }).populate("post");
 
     const savedPosts = saved.map((item) => item.post);
     res.status(200).json({ userPosts, savedPosts });
@@ -136,21 +120,17 @@ export const profilePosts = async (req, res) => {
 export const getNotificationNumber = async (req, res) => {
   const tokenUserId = req.userId;
   try {
-    const number = await prisma.chat.count({
-      where: {
-        userIDs: {
-          hasSome: [tokenUserId],
-        },
-        NOT: {
-          seenBy: {
-            hasSome: [tokenUserId],
-          },
-        },
+    const number = await Chat.countDocuments({
+      userIDs: {
+        $in: [tokenUserId],
+      },
+      seenBy: {
+        $nin: [tokenUserId],
       },
     });
     res.status(200).json(number);
   } catch (err) {
     console.log(err);
-    res.status(500).json({ message: "Failed to get profile posts!" });
+    res.status(500).json({ message: "Failed to get notification number!" });
   }
 };
